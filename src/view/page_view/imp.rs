@@ -1078,13 +1078,15 @@ impl PageView {
 
     fn scroll_to_rect(&self, page: usize, rect: Rect) {
         let dsf = self.obj().scale_factor().max(1) as f32;
-        let Some((target, left, right)) = ({
+        let Some((top, bottom, target, left, right)) = ({
             let state = self.state.borrow();
             (page < state.layout.pages.len()).then(|| {
                 let (left, content_y) = state.layout.page_to_content(page, rect.x0, rect.y0);
-                let (right, _) = state.layout.page_to_content(page, rect.x1, rect.y0);
+                let (right, content_y1) = state.layout.page_to_content(page, rect.x1, rect.y1);
                 let height = self.obj().height().max(1) as f32;
                 (
+                    (content_y / dsf) as f64,
+                    (content_y1 / dsf) as f64,
                     (content_y / dsf - height * 0.3) as f64,
                     left / dsf,
                     right / dsf,
@@ -1093,8 +1095,21 @@ impl PageView {
         }) else {
             return;
         };
-        self.scroll_to(target);
+        self.scroll_y_into_view(top, bottom, target);
         self.scroll_x_into_view(left, right);
+    }
+
+    /// Like `scroll_x_into_view`: a match already on screen must not jump the view,
+    /// otherwise stepping through neighbouring matches re-parks the page on each step.
+    fn scroll_y_into_view(&self, top: f64, bottom: f64, target: f64) {
+        let Some(adjustment) = self.vadjustment.borrow().clone() else {
+            return;
+        };
+        let (value, page_size) = (adjustment.value(), adjustment.page_size());
+        if top >= value && bottom <= value + page_size {
+            return;
+        }
+        self.scroll_to(target);
     }
 
     /// Minimal horizontal scroll: a match already on screen must not shift the view sideways.
