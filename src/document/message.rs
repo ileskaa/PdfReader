@@ -15,13 +15,13 @@ pub struct RenderJob {
     pub scale: f32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LinkTarget {
     Page(usize),
     Uri(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PageLink {
     pub rect: Rect,
     pub target: LinkTarget,

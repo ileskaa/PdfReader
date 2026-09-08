@@ -90,6 +90,7 @@ pub struct PageView {
     tick: RefCell<Option<gtk4::TickCallbackId>>,
     last_autoscroll: Cell<i64>,
     hover_link: RefCell<Option<String>>,
+    pressed_link: RefCell<Option<PageLink>>,
     cursor_name: Cell<&'static str>,
     on_loaded: Slot<OutlineCallback>,
     on_error: Slot<TextCallback>,
@@ -159,6 +160,16 @@ impl ObjectImpl for PageView {
     fn dispose(&self) {
         if let Some(tick) = self.tick.take() {
             tick.remove();
+        }
+        // An adjustment can outlive the widget, so drop our handlers with it.
+        // Not via set_adjustment: that queues an allocation on a disposing widget.
+        for (slot, signal) in [
+            (&self.vadjustment, &self.vsignal),
+            (&self.hadjustment, &self.hsignal),
+        ] {
+            if let (Some(adjustment), Some(id)) = (slot.take(), signal.take()) {
+                adjustment.disconnect(id);
+            }
         }
     }
 }
@@ -743,8 +754,8 @@ impl PageView {
         click.connect_released(glib::clone!(
             #[weak(rename_to = imp)]
             self,
-            move |_, _, _, _| {
-                imp.on_released();
+            move |_, _, x, y| {
+                imp.on_released(x, y);
             }
         ));
         click.connect_cancel(glib::clone!(
@@ -768,7 +779,11 @@ impl PageView {
             #[weak(rename_to = imp)]
             self,
             move |_| {
-                imp.pointer.set((-1.0, -1.0));
+                // Mid-drag the pointer stays meaningful: autoscroll and extend_to
+                // must not act on the off-widget sentinel.
+                if !imp.dragging.get() {
+                    imp.pointer.set((-1.0, -1.0));
+                }
                 if imp.hover_link.borrow_mut().take().is_some() {
                     imp.report_hover(None);
                 }
@@ -821,7 +836,10 @@ impl PageView {
     /// Nearest position on the nearest page, however far away the pointer is. For extending a
     /// drag, where the pointer routinely leaves the page.
     fn pointer_to_pos(&self, x: f64, y: f64) -> Option<TextPos> {
-        let target = self.pointer_target(x, y)?;
+        self.pos_at(&self.pointer_target(x, y)?)
+    }
+
+    fn pos_at(&self, target: &PointerTarget) -> Option<TextPos> {
         let state = self.state.borrow();
         let text = state.texts.get(&target.page)?;
         selection::hit_test(text, target.page, target.x, target.y)
@@ -831,14 +849,16 @@ impl PageView {
     /// starting a selection and for the cursor shape, neither of which should react to
     /// background the way a browser does not.
     fn pointer_to_pos_on_page(&self, x: f64, y: f64) -> Option<TextPos> {
-        self.pointer_target(x, y)?
-            .on_page
-            .then(|| self.pointer_to_pos(x, y))
-            .flatten()
+        let target = self.pointer_target(x, y).filter(|target| target.on_page)?;
+        self.pos_at(&target)
     }
 
     fn link_at(&self, x: f64, y: f64) -> Option<PageLink> {
         let target = self.pointer_target(x, y).filter(|target| target.on_page)?;
+        self.link_for_target(&target)
+    }
+
+    fn link_for_target(&self, target: &PointerTarget) -> Option<PageLink> {
         let state = self.state.borrow();
         state
             .links
@@ -861,10 +881,12 @@ impl PageView {
         if presses == 1
             && let Some(link) = self.link_at(x, y)
         {
+            // Armed on press, fired on release: a mis-press can still be
+            // aborted by releasing off the link.
             gesture.set_state(gtk4::EventSequenceState::Claimed);
+            *self.pressed_link.borrow_mut() = Some(link);
             self.state.borrow_mut().selection = None;
             self.obj().queue_draw();
-            self.activate_link(&link);
             return;
         }
         let extend = gesture
@@ -873,7 +895,12 @@ impl PageView {
         if self.pointer_to_pos_on_page(x, y).is_some() {
             self.begin_selection(x, y, presses, extend);
         } else if self.page_text_pending(x, y) {
-            // The press is replayed from the Text response rather than dropped.
+            // The press is replayed from the Text response rather than dropped. The old
+            // selection goes now: a release cancels the replay, and a click that appears
+            // to do nothing must not leave a stale highlight behind.
+            if !extend {
+                self.state.borrow_mut().selection = None;
+            }
             self.pending_press.set(Some((x, y, presses, extend)));
         } else {
             self.state.borrow_mut().selection = None;
@@ -924,10 +951,20 @@ impl PageView {
     fn cancel_drag(&self) {
         self.dragging.set(false);
         self.pending_press.set(None);
+        self.pressed_link.borrow_mut().take();
         self.stop_autoscroll();
     }
 
-    fn on_released(&self) {
+    fn on_released(&self, x: f64, y: f64) {
+        let armed = self.pressed_link.borrow_mut().take();
+        if let Some(link) = armed {
+            self.cancel_drag();
+            // A link has no identity of its own: same area, same target is the same link.
+            if self.link_at(x, y).is_some_and(|hit| hit == link) {
+                self.activate_link(&link);
+            }
+            return;
+        }
         self.cancel_drag();
         if self.selection_complete() {
             self.write_primary();
@@ -958,7 +995,11 @@ impl PageView {
             self.extend_to(x, y);
             return;
         }
-        let link = self.link_at(x, y);
+        // One pointer_target for the hover link and the cursor shape: this runs per motion event.
+        let target = self.pointer_target(x, y).filter(|target| target.on_page);
+        let link = target
+            .as_ref()
+            .and_then(|target| self.link_for_target(target));
         let uri = link.as_ref().map(|link| match &link.target {
             LinkTarget::Uri(uri) => uri.clone(),
             LinkTarget::Page(page) => format!("Page {}", page + 1),
@@ -969,7 +1010,7 @@ impl PageView {
         }
         let name = if link.is_some() {
             "pointer"
-        } else if self.pointer_to_pos_on_page(x, y).is_some() {
+        } else if target.and_then(|target| self.pos_at(&target)).is_some() {
             "text"
         } else {
             "default"
