@@ -45,18 +45,25 @@ impl FindState {
     }
 
     pub fn add(&mut self, page: usize, rects: Vec<Rect>) {
-        for rect in rects {
-            let hit = Hit { page, rect };
-            let at = self.hits.partition_point(|existing| {
-                (existing.page, existing.rect.y0, existing.rect.x0)
-                    < (hit.page, hit.rect.y0, hit.rect.x0)
-            });
-            self.hits.insert(at, hit);
-            if let Some(current) = self.current.as_mut()
-                && at <= *current
-            {
-                *current += 1;
-            }
+        if rects.is_empty() {
+            return;
+        }
+        // A response carries one whole page, and `search_order` wraps, so the
+        // later half of a search inserts near index 0. Splicing the sorted
+        // batch in as a block keeps that O(n) per page instead of O(n) per hit.
+        let mut batch: Vec<Hit> = rects.into_iter().map(|rect| Hit { page, rect }).collect();
+        batch.sort_by(|a, b| {
+            (a.rect.y0, a.rect.x0)
+                .partial_cmp(&(b.rect.y0, b.rect.x0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let at = self.hits.partition_point(|existing| existing.page < page);
+        let added = batch.len();
+        self.hits.splice(at..at, batch);
+        if let Some(current) = self.current.as_mut()
+            && at <= *current
+        {
+            *current += added;
         }
     }
 
@@ -133,6 +140,25 @@ mod tests {
             (after.page, after.rect.y0),
             (selected.page, selected.rect.y0)
         );
+        assert_eq!(find.current, Some(3));
+    }
+
+    #[test]
+    fn a_batch_lands_in_page_order_even_when_its_rects_arrive_unsorted() {
+        let mut find = FindState::default();
+        find.start("x".to_string());
+        find.add(5, vec![rect(50.0)]);
+        find.select_nearest(5);
+        assert_eq!(find.current, Some(0));
+
+        find.add(1, vec![rect(30.0), rect(10.0), rect(20.0)]);
+
+        let order: Vec<(usize, f32)> = find
+            .hits
+            .iter()
+            .map(|hit| (hit.page, hit.rect.y0))
+            .collect();
+        assert_eq!(order, vec![(1, 10.0), (1, 20.0), (1, 30.0), (5, 50.0)]);
         assert_eq!(find.current, Some(3));
     }
 
