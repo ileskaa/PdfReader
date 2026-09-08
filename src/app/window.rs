@@ -9,6 +9,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::view::PageView;
+use crate::view::clipboard;
 
 thread_local! {
     static WINDOWS: RefCell<Vec<Rc<AppWindow>>> = const { RefCell::new(Vec::new()) };
@@ -379,9 +380,7 @@ impl AppWindow {
             .skip(start.max(0) as usize)
             .take((end - start).max(0) as usize)
             .collect();
-        if !selected.is_empty() {
-            self.find_entry.clipboard().set_text(&selected);
-        }
+        clipboard::set(&self.find_entry, &selected);
     }
 
     pub fn show_find(&self) {

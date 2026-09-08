@@ -949,10 +949,7 @@ impl PageView {
     }
 
     fn write_primary(&self) {
-        let text = self.selection_text();
-        if !text.is_empty() {
-            self.obj().primary_clipboard().set_text(&text);
-        }
+        clipboard::primary(&*self.obj(), &self.selection_text());
     }
 
     fn on_motion(&self, x: f64, y: f64) {
