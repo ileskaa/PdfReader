@@ -76,6 +76,7 @@ pub struct PageView {
     vscroll_policy: Policy,
     hsignal: RefCell<Option<glib::SignalHandlerId>>,
     vsignal: RefCell<Option<glib::SignalHandlerId>>,
+    style_signals: RefCell<Vec<glib::SignalHandlerId>>,
     state: RefCell<State>,
     cache: RefCell<TextureCache>,
     dragging: Cell<bool>,
@@ -154,6 +155,21 @@ impl ObjectImpl for PageView {
                 imp.relayout(true);
             }
         ));
+        // A light/dark or accent change emits nothing on the widget, so nothing else
+        // observes it, and snapshot reads the accent fresh on every frame.
+        let style = libadwaita::StyleManager::default();
+        self.style_signals.replace(vec![
+            style.connect_dark_notify(glib::clone!(
+                #[weak(rename_to = imp)]
+                self,
+                move |_| imp.obj().queue_draw()
+            )),
+            style.connect_accent_color_notify(glib::clone!(
+                #[weak(rename_to = imp)]
+                self,
+                move |_| imp.obj().queue_draw()
+            )),
+        ]);
         self.install_controllers();
     }
 
@@ -170,6 +186,12 @@ impl ObjectImpl for PageView {
             if let (Some(adjustment), Some(id)) = (slot.take(), signal.take()) {
                 adjustment.disconnect(id);
             }
+        }
+        // The style manager is a process-global singleton, so it would hold these
+        // closures — and their weak refs — for the life of the process.
+        let style = libadwaita::StyleManager::default();
+        for id in self.style_signals.take() {
+            style.disconnect(id);
         }
     }
 }
