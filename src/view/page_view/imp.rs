@@ -230,6 +230,9 @@ impl WidgetImpl for PageView {
         let match_color = with_alpha(accent, 0.22);
         let current_color = with_alpha(accent, 0.55);
         let paper = gdk::RGBA::new(1.0, 1.0, 1.0, 1.0);
+        // In light mode the canvas is near-white, so a white page has no edge of its own.
+        // A translucent black shadow reads on either canvas, so it needs no theme branch.
+        let page_shadow = gdk::RGBA::new(0.0, 0.0, 0.0, 0.22);
 
         let mut cache = self.cache.borrow_mut();
         for page in range {
@@ -239,6 +242,14 @@ impl WidgetImpl for PageView {
                 rect.y as f32 / dsf - offy,
                 rect.width as f32 / dsf,
                 rect.height as f32 / dsf,
+            );
+            snapshot.append_outset_shadow(
+                &gsk::RoundedRect::from_rect(bounds, 0.0),
+                &page_shadow,
+                0.0,
+                2.0,
+                0.0,
+                6.0,
             );
             snapshot.append_color(&paper, &bounds);
             if let Some(entry) = cache.get(page) {
