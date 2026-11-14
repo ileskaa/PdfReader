@@ -46,36 +46,21 @@ GTK 4.22 or newer and libadwaita 1.9 or newer are required.
 
 ### Build and install
 
-Build and install to `~/.local/bin` in one step:
-
 ```sh
-cargo install --locked --path . --root ~/.local
+make install
 ```
+
+This builds the release binary and installs it to `~/.local/bin`, together with the desktop
+file and icon from `data/`, so the reader shows up in your application launcher and as a
+handler for PDF files. Make sure `~/.local/bin` is on your `PATH`.
 
 The first build compiles the vendored MuPDF sources and takes a few minutes. To update, pull
-and run the same command again. Make sure `~/.local/bin` is on your `PATH`.
+and run `make install` again. Set `PREFIX` to install somewhere other than `~/.local`, and
+run `make uninstall` (with the same `PREFIX`) to remove everything again.
 
-Alternatively, build and copy the binary yourself:
+### Default PDF handler
 
-```sh
-cargo build --release
-install -Dm755 target/release/pdf-reader ~/.local/bin/pdf-reader
-```
-
-### Desktop integration
-
-To have the reader show up in your application launcher, with its icon, and as a handler for
-PDF files, install the desktop file and icon from `data/`, then refresh the caches. Rerun
-these after pulling to pick up changes:
-
-```sh
-install -Dm644 data/io.github.ileskaa.PdfReader.desktop ~/.local/share/applications/io.github.ileskaa.PdfReader.desktop
-install -Dm644 data/icons/pdf-reader.svg ~/.local/share/icons/hicolor/scalable/apps/pdf-reader.svg
-update-desktop-database ~/.local/share/applications
-gtk4-update-icon-cache -f -t ~/.local/share/icons/hicolor
-```
-
-To make it the default PDF handler:
+To make the reader the default PDF handler:
 
 ```sh
 xdg-mime default io.github.ileskaa.PdfReader.desktop application/pdf

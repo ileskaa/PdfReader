@@ -7,7 +7,7 @@ This is a Rust 2024 GTK4/libadwaita PDF reader built on MuPDF.
 - `src/main.rs` starts the application and handles CLI arguments; `src/check.rs` provides the headless `--check` path.
 - `src/document/` contains the MuPDF worker, request/response messages, text model, and outline handling. Keep it independent of `app/` and `view/`.
 - `src/app/` contains the application window and actions; `src/view/` contains layout, rendering cache, selection, find, clipboard, and the custom page widget.
-- `data/` holds desktop integration assets (the `.desktop` file and the launcher icon) that `README.md` installs by path.
+- `data/` holds desktop integration assets (the `.desktop` file and the launcher icon) that the `Makefile`'s `install` target copies alongside the binary.
 - `plans/` records the implementation plan, while `README.md` documents installation and user-facing behavior. `LICENSE` is AGPL-3.0-or-later.
 
 Place new code in the narrowest responsible module and preserve the worker boundary: MuPDF handles stay on the worker thread, and cross-thread messages must remain `Send`.
