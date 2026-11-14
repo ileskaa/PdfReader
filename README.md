@@ -46,25 +46,21 @@ GTK 4.22 or newer and libadwaita 1.9 or newer are required.
 
 ### Build and install
 
+Build and install to `~/.local/bin` in one step:
+
+```sh
+cargo install --locked --path . --root ~/.local
+```
+
+The first build compiles the vendored MuPDF sources and takes a few minutes. To update, pull
+and run the same command again. Make sure `~/.local/bin` is on your `PATH`.
+
+Alternatively, build and copy the binary yourself:
+
 ```sh
 cargo build --release
-```
-
-The first build compiles the vendored MuPDF sources and takes a few minutes.
-
-Install to `~/.local/bin`:
-
-```sh
-cargo install --path . --root ~/.local
-```
-
-or copy the binary manually:
-
-```sh
 install -Dm755 target/release/pdf-reader ~/.local/bin/pdf-reader
 ```
-
-Make sure `~/.local/bin` is on your `PATH`.
 
 ### Desktop integration
 
@@ -84,10 +80,10 @@ MimeType=application/pdf;
 StartupNotify=true
 ```
 
-Provide an icon at `~/.local/share/icons/hicolor/scalable/apps/pdf-reader.svg` (any scalable
-SVG works; the name must match the `Icon=` key), then refresh the caches:
+Install the icon, then refresh the caches:
 
 ```sh
+install -Dm644 data/icons/pdf-reader.svg ~/.local/share/icons/hicolor/scalable/apps/pdf-reader.svg
 update-desktop-database ~/.local/share/applications
 gtk4-update-icon-cache -f -t ~/.local/share/icons/hicolor
 ```
