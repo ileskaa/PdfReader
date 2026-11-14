@@ -905,6 +905,7 @@ name = "pdf-reader"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "glib",
  "gtk4",
  "libadwaita",
  "mupdf",

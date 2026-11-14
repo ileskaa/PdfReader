@@ -8,6 +8,7 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
+use crate::app::session;
 use crate::view::PageView;
 use crate::view::clipboard;
 
@@ -28,6 +29,10 @@ pub struct AppWindow {
     outline_model: gtk4::StringList,
     outline_targets: RefCell<Vec<Option<usize>>>,
     sidebar_button: gtk4::ToggleButton,
+    /// The path being opened; it becomes `document` only once it loads, so a failed open
+    /// never enters the saved session.
+    pending: RefCell<Option<PathBuf>>,
+    document: RefCell<Option<PathBuf>>,
 }
 
 impl AppWindow {
@@ -186,6 +191,8 @@ impl AppWindow {
             outline_model,
             outline_targets: RefCell::new(Vec::new()),
             sidebar_button,
+            pending: RefCell::new(None),
+            document: RefCell::new(None),
         });
 
         this.wire(&outline_view);
@@ -196,7 +203,7 @@ impl AppWindow {
             #[upgrade_or]
             glib::Propagation::Proceed,
             move |_| {
-                WINDOWS.with_borrow_mut(|list| list.retain(|other| !Rc::ptr_eq(other, &this)));
+                this.unregister();
                 glib::Propagation::Proceed
             }
         ));
@@ -209,12 +216,14 @@ impl AppWindow {
             self,
             move |outline| {
                 this.set_outline(outline);
+                this.commit_document();
             }
         ));
         self.view.connect_error(glib::clone!(
             #[weak(rename_to = this)]
             self,
             move |message| {
+                this.forget_document();
                 this.show_error(message);
             }
         ));
@@ -290,6 +299,7 @@ impl AppWindow {
             .unwrap_or_default();
         self.title.set_title(&name);
         self.title.set_subtitle(&path.to_string_lossy());
+        self.pending.replace(Some(path.clone()));
         self.view.load(path);
         let needle = self.find_entry.text();
         if self.find_bar.reveals_child() && !needle.is_empty() {
@@ -328,6 +338,35 @@ impl AppWindow {
                 }
             ),
         );
+    }
+
+    fn commit_document(&self) {
+        let Some(path) = self.pending.take() else {
+            return;
+        };
+        self.document.replace(Some(path));
+        persist_session();
+    }
+
+    // `PageView::load` drops the previous document up front, so a failed open leaves the
+    // window empty and its old entry must leave the session too.
+    fn forget_document(&self) {
+        self.pending.take();
+        if self.document.take().is_some() {
+            persist_session();
+        }
+    }
+
+    fn unregister(self: &Rc<Self>) {
+        let remaining = WINDOWS.with_borrow_mut(|list| {
+            list.retain(|other| !Rc::ptr_eq(other, self));
+            list.len()
+        });
+        // Closing the last window is quitting, like closing a browser: the session it leaves
+        // behind is what the next bare launch restores.
+        if remaining > 0 {
+            persist_session();
+        }
     }
 
     fn on_find_key(
@@ -426,6 +465,19 @@ impl AppWindow {
         dialog.add_response("ok", "OK");
         dialog.present(Some(&self.window));
     }
+}
+
+pub fn has_windows() -> bool {
+    WINDOWS.with_borrow(|list| !list.is_empty())
+}
+
+fn persist_session() {
+    let paths: Vec<PathBuf> = WINDOWS.with_borrow(|list| {
+        list.iter()
+            .filter_map(|window| window.document.borrow().clone())
+            .collect()
+    });
+    session::save(&paths);
 }
 
 fn icon_button(icon: &str, tooltip: &str, action: &str) -> gtk4::Button {

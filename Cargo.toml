@@ -7,6 +7,10 @@ description = "A GTK4 PDF reader built on MuPDF"
 
 [dependencies]
 async-channel = "2"
+# Listed only to enable the `v2_72` bindings; must match the glib gtk4 depends on.
+# Code imports it as `gtk4::glib`, so a version mismatch fails to compile instead of
+# building two glibs. Don't `use glib::` directly, which would bypass that check.
+glib = { version = "0.22", features = ["v2_72"] }
 gtk4 = { version = "=0.11.4", features = ["v4_22"] }
 libadwaita = { version = "=0.9.2", features = ["v1_9", "gtk_v4_22"] }
 mupdf = { version = "0.8", default-features = false, features = ["base14-fonts", "system-fonts", "brotli"] }

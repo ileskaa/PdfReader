@@ -25,7 +25,7 @@ fn main() -> ExitCode {
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
     app.connect_startup(app::actions::install_accels);
-    app.connect_activate(|app| present(app, None));
+    app.connect_activate(activate);
     app.connect_open(|app, files, _| {
         if files.is_empty() {
             present(app, None);
@@ -48,6 +48,25 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// A bare launch restores the last session; a launch forwarded to an already running
+/// instance just opens another empty window.
+fn activate(application: &adw::Application) {
+    if app::window::has_windows() {
+        present(application, None);
+        return;
+    }
+    let restored: Vec<PathBuf> = app::session::load()
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+    if restored.is_empty() {
+        present(application, None);
+    }
+    for path in restored {
+        present(application, Some(path));
     }
 }
 
