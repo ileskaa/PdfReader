@@ -2,3 +2,7 @@
 
 # Test documents, kept out of this AGPL repo's history
 /*.pdf
+
+# Local planning notes
+/plans/
+/status.md
