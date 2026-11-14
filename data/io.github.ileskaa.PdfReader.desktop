@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PDF Reader
+Comment=Read PDF documents
+Exec=pdf-reader %F
+Icon=pdf-reader
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/pdf;
+StartupNotify=true

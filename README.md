@@ -64,25 +64,12 @@ install -Dm755 target/release/pdf-reader ~/.local/bin/pdf-reader
 
 ### Desktop integration
 
-To have the reader show up in your application launcher and as a handler for PDF files,
-create `~/.local/share/applications/io.github.ileskaa.PdfReader.desktop`:
-
-```ini
-[Desktop Entry]
-Type=Application
-Name=PDF Reader
-Comment=Read PDF documents
-Exec=pdf-reader %f
-Icon=pdf-reader
-Terminal=false
-Categories=Office;Viewer;
-MimeType=application/pdf;
-StartupNotify=true
-```
-
-Install the icon, then refresh the caches:
+To have the reader show up in your application launcher, with its icon, and as a handler for
+PDF files, install the desktop file and icon from `data/`, then refresh the caches. Rerun
+these after pulling to pick up changes:
 
 ```sh
+install -Dm644 data/io.github.ileskaa.PdfReader.desktop ~/.local/share/applications/io.github.ileskaa.PdfReader.desktop
 install -Dm644 data/icons/pdf-reader.svg ~/.local/share/icons/hicolor/scalable/apps/pdf-reader.svg
 update-desktop-database ~/.local/share/applications
 gtk4-update-icon-cache -f -t ~/.local/share/icons/hicolor
