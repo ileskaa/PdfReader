@@ -677,9 +677,14 @@ impl PageView {
                     &bytes,
                     rendered.stride,
                 );
-                self.cache
-                    .borrow_mut()
-                    .insert(rendered.page, texture.upcast(), rendered.scale);
+                self.cache.borrow_mut().insert(
+                    rendered.page,
+                    texture.upcast(),
+                    rendered.scale,
+                    bytes.len(),
+                );
+                let visible = self.visible_pages();
+                self.cache.borrow_mut().trim(visible);
                 self.state
                     .borrow_mut()
                     .sent_renders
