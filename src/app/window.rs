@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gtk4::gio;
@@ -9,137 +9,89 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::app::session;
-use crate::view::PageView;
-use crate::view::clipboard;
+use crate::app::tab::{DocumentTab, TabEvent};
+use crate::document::outline::OutlineItem;
 
 thread_local! {
-    static WINDOWS: RefCell<Vec<Rc<AppWindow>>> = const { RefCell::new(Vec::new()) };
+    static WINDOW: RefCell<Option<Rc<AppWindow>>> = const { RefCell::new(None) };
 }
 
+const APP_TITLE: &str = "PDF Reader";
+
+/// The application's single window. Its header, outline sidebar and page label show the
+/// selected tab; everything per document lives in `DocumentTab`.
 pub struct AppWindow {
     pub window: adw::ApplicationWindow,
-    pub view: PageView,
     pub split: adw::OverlaySplitView,
-    pub find_bar: gtk4::Revealer,
-    pub find_entry: gtk4::SearchEntry,
-    find_status: gtk4::Label,
-    status_label: gtk4::Label,
+    tab_view: adw::TabView,
+    stack: gtk4::Stack,
     page_label: gtk4::Label,
     title: adw::WindowTitle,
     outline_model: gtk4::StringList,
     outline_targets: RefCell<Vec<Option<usize>>>,
     sidebar_button: gtk4::ToggleButton,
-    /// The path being opened; it becomes `document` only once it loads, so a failed open
-    /// never enters the saved session.
-    pending: RefCell<Option<PathBuf>>,
-    document: RefCell<Option<PathBuf>>,
+    /// Tab state keyed by its page; `tab_view` owns the display order.
+    tabs: RefCell<Vec<(adw::TabPage, Rc<DocumentTab>)>>,
 }
 
 impl AppWindow {
     pub fn new(app: &adw::Application) -> Rc<Self> {
-        let view = PageView::new();
-        let scroller = gtk4::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk4::PolicyType::Automatic)
-            .vscrollbar_policy(gtk4::PolicyType::Automatic)
-            .hexpand(true)
-            .vexpand(true)
-            .child(&view)
-            .build();
-
-        let title = adw::WindowTitle::new("PDF Reader", "");
+        let title = adw::WindowTitle::new(APP_TITLE, "");
         let sidebar_button = gtk4::ToggleButton::builder()
             .icon_name("sidebar-show-symbolic")
             .tooltip_text("Toggle contents")
             .visible(false)
             .build();
-        let open_button = gtk4::Button::builder()
-            .icon_name("document-open-symbolic")
-            .tooltip_text("Open a document")
-            .action_name("win.open")
-            .build();
-        let zoom_out = gtk4::Button::builder()
-            .icon_name("zoom-out-symbolic")
-            .tooltip_text("Zoom out")
-            .action_name("win.zoom-out")
-            .build();
-        let zoom_in = gtk4::Button::builder()
-            .icon_name("zoom-in-symbolic")
-            .tooltip_text("Zoom in")
-            .action_name("win.zoom-in")
-            .build();
-        let find_button = gtk4::Button::builder()
-            .icon_name("system-search-symbolic")
-            .tooltip_text("Find in document")
-            .action_name("win.find")
-            .build();
         let page_label = gtk4::Label::builder().css_classes(["dim-label"]).build();
 
         let header = adw::HeaderBar::builder().title_widget(&title).build();
         header.pack_start(&sidebar_button);
-        header.pack_start(&open_button);
+        header.pack_start(&icon_button(
+            "document-open-symbolic",
+            "Open a document",
+            "win.open",
+        ));
         header.pack_end(&build_menu_button());
-        header.pack_end(&find_button);
-        header.pack_end(&zoom_in);
-        header.pack_end(&zoom_out);
+        header.pack_end(&icon_button(
+            "system-search-symbolic",
+            "Find in document",
+            "win.find",
+        ));
+        header.pack_end(&icon_button("zoom-in-symbolic", "Zoom in", "win.zoom-in"));
+        header.pack_end(&icon_button(
+            "zoom-out-symbolic",
+            "Zoom out",
+            "win.zoom-out",
+        ));
         header.pack_end(&page_label);
 
-        let find_entry = gtk4::SearchEntry::builder()
-            .placeholder_text("Find in document")
-            .hexpand(true)
-            .build();
-        let find_status = gtk4::Label::builder()
-            .css_classes(["dim-label"])
-            .width_chars(12)
-            .xalign(1.0)
-            .build();
-        let find_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .spacing(6)
-            .margin_top(6)
-            .margin_bottom(6)
-            .margin_start(6)
-            .margin_end(6)
-            .build();
-        find_box.append(&find_entry);
-        find_box.append(&find_status);
-        find_box.append(&icon_button(
-            "go-up-symbolic",
-            "Previous match",
-            "win.find-previous",
-        ));
-        find_box.append(&icon_button(
-            "go-down-symbolic",
-            "Next match",
-            "win.find-next",
-        ));
-        find_box.append(&icon_button(
-            "window-close-symbolic",
-            "Close",
-            "win.find-close",
-        ));
-        let find_bar = gtk4::Revealer::builder()
-            .transition_type(gtk4::RevealerTransitionType::SlideUp)
-            .child(&find_box)
+        let tab_view = adw::TabView::new();
+        let tab_bar = adw::TabBar::builder()
+            .view(&tab_view)
+            .autohide(true)
             .build();
 
-        let status_label = gtk4::Label::builder()
-            .css_classes(["dim-label", "caption"])
-            .xalign(0.0)
-            .ellipsize(gtk4::pango::EllipsizeMode::Middle)
-            .margin_start(8)
-            .margin_end(8)
-            .margin_top(2)
-            .margin_bottom(2)
+        let empty = adw::StatusPage::builder()
+            .icon_name("document-open-symbolic")
+            .title("No Document Open")
+            .child(
+                &gtk4::Button::builder()
+                    .label("Open…")
+                    .halign(gtk4::Align::Center)
+                    .css_classes(["pill", "suggested-action"])
+                    .action_name("win.open")
+                    .build(),
+            )
             .build();
-
-        let bottom = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-        bottom.append(&status_label);
-        bottom.append(&find_bar);
+        let stack = gtk4::Stack::new();
+        stack.add_named(&empty, Some("empty"));
+        stack.add_named(&tab_view, Some("tabs"));
+        stack.set_visible_child_name("empty");
 
         let content = adw::ToolbarView::new();
         content.add_top_bar(&header);
-        content.set_content(Some(&scroller));
-        content.add_bottom_bar(&bottom);
+        content.add_top_bar(&tab_bar);
+        content.set_content(Some(&stack));
 
         let outline_model = gtk4::StringList::new(&[]);
         let outline_view = build_outline_view(&outline_model);
@@ -166,7 +118,7 @@ impl AppWindow {
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
-            .title("PDF Reader")
+            .title(APP_TITLE)
             .default_width(1000)
             .default_height(760)
             .content(&split)
@@ -180,87 +132,64 @@ impl AppWindow {
 
         let this = Rc::new(Self {
             window,
-            view,
             split,
-            find_bar,
-            find_entry,
-            find_status,
-            status_label,
+            tab_view,
+            stack,
             page_label,
             title,
             outline_model,
             outline_targets: RefCell::new(Vec::new()),
             sidebar_button,
-            pending: RefCell::new(None),
-            document: RefCell::new(None),
+            tabs: RefCell::new(Vec::new()),
         });
-
         this.wire(&outline_view);
-        WINDOWS.with_borrow_mut(|list| list.push(Rc::clone(&this)));
-        this.window.connect_close_request(glib::clone!(
-            #[weak(rename_to = this)]
-            this,
-            #[upgrade_or]
-            glib::Propagation::Proceed,
-            move |_| {
-                this.unregister();
-                glib::Propagation::Proceed
-            }
-        ));
+        WINDOW.with_borrow_mut(|slot| *slot = Some(Rc::clone(&this)));
         this
     }
 
     fn wire(self: &Rc<Self>, outline_view: &gtk4::ListView) {
-        self.view.connect_loaded(glib::clone!(
+        // Closing the window is quitting, like closing a browser: the session it leaves behind
+        // is what the next bare launch restores, so tearing down its tabs must not save.
+        self.window.connect_close_request(|_| {
+            WINDOW.with_borrow_mut(|slot| slot.take());
+            glib::Propagation::Proceed
+        });
+        self.tab_view.connect_close_page(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |outline| {
-                this.set_outline(outline);
-                this.commit_document();
+            #[upgrade_or]
+            glib::Propagation::Proceed,
+            move |_, page| {
+                this.tabs.borrow_mut().retain(|(other, _)| other != page);
+                this.persist_session();
+                glib::Propagation::Proceed
             }
         ));
-        self.view.connect_error(glib::clone!(
+        self.tab_view.connect_page_reordered(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |message| {
-                this.forget_document();
-                this.show_error(message);
+            move |_, _, _| this.persist_session()
+        ));
+        self.tab_view.connect_n_pages_notify(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |view| {
+                let name = if view.n_pages() == 0 { "empty" } else { "tabs" };
+                this.stack.set_visible_child_name(name);
+                this.sync_header();
             }
         ));
-        self.view.connect_find_status(glib::clone!(
+        self.tab_view.connect_selected_page_notify(glib::clone!(
             #[weak(rename_to = this)]
             self,
-            move |status| {
-                this.find_status.set_label(status);
-            }
-        ));
-        self.view.connect_status(glib::clone!(
-            #[weak(rename_to = this)]
-            self,
-            move |status| {
-                this.status_label.set_label(status.unwrap_or(""));
-            }
-        ));
-        self.view.connect_page_changed(glib::clone!(
-            #[weak(rename_to = this)]
-            self,
-            move |(page, total)| {
-                let label = if total == 0 {
-                    String::new()
-                } else {
-                    format!("{} of {total}", page + 1)
-                };
-                this.page_label.set_label(&label);
+            move |_| {
+                this.sync_header();
+                if let Some(tab) = this.selected_tab() {
+                    tab.view.grab_focus();
+                }
             }
         ));
 
-        self.find_entry.connect_search_changed(glib::clone!(
-            #[weak(rename_to = this)]
-            self,
-            move |entry| {
-                this.view.find(entry.text().as_str());
-            }
-        ));
         let keys = gtk4::EventControllerKey::new();
         keys.set_propagation_phase(gtk4::PropagationPhase::Capture);
         keys.connect_key_pressed(glib::clone!(
@@ -268,7 +197,10 @@ impl AppWindow {
             self,
             #[upgrade_or]
             glib::Propagation::Proceed,
-            move |_, key, _, modifiers| this.on_find_key(key, modifiers)
+            move |_, key, _, modifiers| match this.selected_tab() {
+                Some(tab) => tab.on_find_key(key, modifiers),
+                None => glib::Propagation::Proceed,
+            }
         ));
         self.window.add_controller(keys);
 
@@ -282,8 +214,8 @@ impl AppWindow {
                     .get(index as usize)
                     .copied()
                     .flatten();
-                if let Some(page) = target {
-                    this.view.goto_page(page);
+                if let (Some(page), Some(tab)) = (target, this.selected_tab()) {
+                    tab.view.goto_page(page);
                 }
                 if this.split.is_collapsed() {
                     this.split.set_show_sidebar(false);
@@ -292,19 +224,25 @@ impl AppWindow {
         ));
     }
 
-    pub fn open(&self, path: PathBuf) {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        self.title.set_title(&name);
-        self.title.set_subtitle(&path.to_string_lossy());
-        self.pending.replace(Some(path.clone()));
-        self.view.load(path);
-        let needle = self.find_entry.text();
-        if self.find_bar.reveals_child() && !needle.is_empty() {
-            self.view.find(needle.as_str());
+    /// Opens `path` in a new, selected tab, or selects the tab that already shows it.
+    pub fn open(self: &Rc<Self>, path: PathBuf) {
+        if let Some(page) = self.page_for_path(&path) {
+            self.tab_view.set_selected_page(&page);
+            return;
         }
+        let tab = DocumentTab::new(path);
+        tab.set_listener(glib::clone!(
+            #[weak(rename_to = this)]
+            self,
+            move |tab, event| this.on_tab_event(tab, event)
+        ));
+        let page = self.tab_view.append(&tab.root);
+        page.set_title(&tab.name());
+        page.set_tooltip(&glib::markup_escape_text(&tab.path().to_string_lossy()));
+        self.tabs.borrow_mut().push((page.clone(), Rc::clone(&tab)));
+        tab.load();
+        self.tab_view.set_selected_page(&page);
+        self.persist_session();
     }
 
     pub fn open_dialog(self: &Rc<Self>) {
@@ -340,109 +278,65 @@ impl AppWindow {
         );
     }
 
-    fn commit_document(&self) {
-        let Some(path) = self.pending.take() else {
+    pub fn selected_tab(&self) -> Option<Rc<DocumentTab>> {
+        let page = self.tab_view.selected_page()?;
+        self.tab_for_page(&page)
+    }
+
+    pub fn select_first(&self) {
+        if self.tab_view.n_pages() > 0 {
+            self.tab_view.set_selected_page(&self.tab_view.nth_page(0));
+        }
+    }
+
+    pub fn close_selected_tab(&self) {
+        if let Some(page) = self.tab_view.selected_page() {
+            self.tab_view.close_page(&page);
+        }
+    }
+
+    pub fn show_error(&self, message: &str) {
+        let dialog = adw::AlertDialog::new(Some("Cannot open document"), Some(message));
+        dialog.add_response("ok", "OK");
+        dialog.present(Some(&self.window));
+    }
+
+    fn on_tab_event(&self, tab: &DocumentTab, event: TabEvent) {
+        let Some(page) = self.page_for_tab(tab) else {
             return;
         };
-        self.document.replace(Some(path));
-        persist_session();
-    }
-
-    // `PageView::load` drops the previous document up front, so a failed open leaves the
-    // window empty and its old entry must leave the session too.
-    fn forget_document(&self) {
-        self.pending.take();
-        if self.document.take().is_some() {
-            persist_session();
+        if let TabEvent::Error(message) = event {
+            // A tab that failed to open has nothing to show, so it goes away with the error.
+            self.tab_view.close_page(&page);
+            self.show_error(message);
+            return;
+        }
+        if self.tab_view.selected_page().as_ref() == Some(&page) {
+            self.sync_header();
         }
     }
 
-    fn unregister(self: &Rc<Self>) {
-        let remaining = WINDOWS.with_borrow_mut(|list| {
-            list.retain(|other| !Rc::ptr_eq(other, self));
-            list.len()
-        });
-        // Closing the last window is quitting, like closing a browser: the session it leaves
-        // behind is what the next bare launch restores.
-        if remaining > 0 {
-            persist_session();
-        }
-    }
-
-    fn on_find_key(
-        &self,
-        key: gtk4::gdk::Key,
-        modifiers: gtk4::gdk::ModifierType,
-    ) -> glib::Propagation {
-        use gtk4::gdk::Key;
-        if !self.find_bar.reveals_child() {
-            return glib::Propagation::Proceed;
-        }
-        let editing = self.entry_has_focus();
-        let control = modifiers.contains(gtk4::gdk::ModifierType::CONTROL_MASK);
-        match key {
-            Key::a if control && editing => self.find_entry.select_region(0, -1),
-            Key::c if control && editing => self.copy_entry_selection(),
-            Key::Escape if self.find_scope_has_focus() => self.close_find(),
-            Key::Return | Key::KP_Enter | Key::ISO_Enter if editing => self
-                .view
-                .find_step(!modifiers.contains(gtk4::gdk::ModifierType::SHIFT_MASK)),
-            _ => return glib::Propagation::Proceed,
-        }
-        glib::Propagation::Stop
-    }
-
-    // A dialog is a descendant of the window, so an ungated Escape would close the find bar
-    // instead of the dialog the user is looking at.
-    fn find_scope_has_focus(&self) -> bool {
-        gtk4::prelude::RootExt::focus(&self.window).is_some_and(|focused| {
-            focused.is_ancestor(&self.find_bar)
-                || focused == *self.view.upcast_ref::<gtk4::Widget>()
-                || focused.is_ancestor(&self.view)
-        })
-    }
-
-    fn entry_has_focus(&self) -> bool {
-        gtk4::prelude::RootExt::focus(&self.window).is_some_and(|focused| {
-            focused == *self.find_entry.upcast_ref::<gtk4::Widget>()
-                || focused.is_ancestor(&self.find_entry)
-        })
-    }
-
-    fn copy_entry_selection(&self) {
-        let text = self.find_entry.text();
-        let Some((start, end)) = self.find_entry.selection_bounds() else {
+    fn sync_header(&self) {
+        let Some(tab) = self.selected_tab() else {
+            self.title.set_title(APP_TITLE);
+            self.title.set_subtitle("");
+            self.page_label.set_label("");
+            self.set_outline(&[]);
             return;
         };
-        let selected: String = text
-            .chars()
-            .skip(start.max(0) as usize)
-            .take((end - start).max(0) as usize)
-            .collect();
-        clipboard::set(&self.find_entry, &selected);
+        self.title.set_title(&tab.name());
+        self.title.set_subtitle(&tab.path().to_string_lossy());
+        let (page, total) = tab.page();
+        let label = if total == 0 {
+            String::new()
+        } else {
+            format!("{} of {total}", page + 1)
+        };
+        self.page_label.set_label(&label);
+        self.set_outline(&tab.outline());
     }
 
-    pub fn show_find(&self) {
-        let revealed = self.find_bar.reveals_child();
-        self.find_bar.set_reveal_child(true);
-        self.find_entry.grab_focus();
-        self.find_entry.select_region(0, -1);
-        let needle = self.find_entry.text();
-        if !revealed && !needle.is_empty() {
-            self.view.find(needle.as_str());
-        }
-    }
-
-    pub fn close_find(&self) {
-        if !self.find_bar.reveals_child() {
-            return;
-        }
-        self.find_bar.set_reveal_child(false);
-        self.view.find_close();
-        self.view.grab_focus();
-    }
-
-    fn set_outline(&self, items: &[crate::document::outline::OutlineItem]) {
+    fn set_outline(&self, items: &[OutlineItem]) {
         let labels: Vec<String> = items
             .iter()
             .map(|item| format!("{}{}", "    ".repeat(item.depth.min(6)), item.title))
@@ -458,26 +352,44 @@ impl AppWindow {
         }
     }
 
-    pub fn show_error(&self, message: &str) {
-        self.title.set_title("PDF Reader");
-        self.title.set_subtitle("");
-        let dialog = adw::AlertDialog::new(Some("Cannot open document"), Some(message));
-        dialog.add_response("ok", "OK");
-        dialog.present(Some(&self.window));
+    fn tab_for_page(&self, page: &adw::TabPage) -> Option<Rc<DocumentTab>> {
+        self.tabs
+            .borrow()
+            .iter()
+            .find(|(other, _)| other == page)
+            .map(|(_, tab)| Rc::clone(tab))
+    }
+
+    fn page_for_tab(&self, tab: &DocumentTab) -> Option<adw::TabPage> {
+        self.tabs
+            .borrow()
+            .iter()
+            .find(|(_, other)| std::ptr::eq(Rc::as_ptr(other), tab))
+            .map(|(page, _)| page.clone())
+    }
+
+    fn page_for_path(&self, path: &Path) -> Option<adw::TabPage> {
+        self.tabs
+            .borrow()
+            .iter()
+            .find(|(_, tab)| tab.path() == path)
+            .map(|(page, _)| page.clone())
+    }
+
+    /// Saves the open tabs in display order. A tab whose open fails closes itself, which
+    /// saves again, so failed paths never linger in the session.
+    fn persist_session(&self) {
+        let paths: Vec<PathBuf> = (0..self.tab_view.n_pages())
+            .filter_map(|index| self.tab_for_page(&self.tab_view.nth_page(index)))
+            .map(|tab| tab.path().to_path_buf())
+            .collect();
+        session::save(&paths);
     }
 }
 
-pub fn has_windows() -> bool {
-    WINDOWS.with_borrow(|list| !list.is_empty())
-}
-
-fn persist_session() {
-    let paths: Vec<PathBuf> = WINDOWS.with_borrow(|list| {
-        list.iter()
-            .filter_map(|window| window.document.borrow().clone())
-            .collect()
-    });
-    session::save(&paths);
+/// The window, if one is open; there is at most one.
+pub fn current() -> Option<Rc<AppWindow>> {
+    WINDOW.with_borrow(|slot| slot.clone())
 }
 
 fn icon_button(icon: &str, tooltip: &str, action: &str) -> gtk4::Button {

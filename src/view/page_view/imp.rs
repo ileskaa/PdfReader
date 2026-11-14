@@ -211,6 +211,19 @@ impl WidgetImpl for PageView {
         self.relayout(true);
     }
 
+    // A view in a background tab is unmapped. Each view's cache may hold up to its full budget,
+    // so a hidden view releases its textures and re-renders when it is shown again.
+    fn unmap(&self) {
+        self.parent_unmap();
+        self.cache.borrow_mut().clear();
+        self.state.borrow_mut().sent_renders.clear();
+    }
+
+    fn map(&self) {
+        self.parent_map();
+        self.schedule();
+    }
+
     fn snapshot(&self, snapshot: &gtk4::Snapshot) {
         let widget = self.obj();
         let state = self.state.borrow();

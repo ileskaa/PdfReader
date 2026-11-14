@@ -6,6 +6,7 @@ mod view;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::rc::Rc;
 
 use gtk4::gio;
 use gtk4::glib;
@@ -28,11 +29,11 @@ fn main() -> ExitCode {
     app.connect_activate(activate);
     app.connect_open(|app, files, _| {
         if files.is_empty() {
-            present(app, None);
+            window(app);
         }
         for file in files {
             match file.path() {
-                Some(path) => present(app, Some(path)),
+                Some(path) => present(app, path),
                 None => present_error(app, &format!("{} is not a local file.", file.uri())),
             }
         }
@@ -51,37 +52,38 @@ fn main() -> ExitCode {
     }
 }
 
-/// A bare launch restores the last session; a launch forwarded to an already running
-/// instance just opens another empty window.
+/// A bare launch restores the last session; a launch forwarded to the running instance
+/// just raises its window.
 fn activate(application: &adw::Application) {
-    if app::window::has_windows() {
-        present(application, None);
+    if let Some(window) = app::window::current() {
+        window.window.present();
         return;
     }
-    let restored: Vec<PathBuf> = app::session::load()
+    let window = window(application);
+    for path in app::session::load()
         .into_iter()
         .filter(|path| path.is_file())
-        .collect();
-    if restored.is_empty() {
-        present(application, None);
-    }
-    for path in restored {
-        present(application, Some(path));
-    }
-}
-
-fn present(application: &adw::Application, path: Option<PathBuf>) {
-    let window = app::window::AppWindow::new(application);
-    app::actions::install(&window);
-    window.window.present();
-    if let Some(path) = path {
+    {
         window.open(path);
     }
+    window.select_first();
+}
+
+fn present(application: &adw::Application, path: PathBuf) {
+    window(application).open(path);
 }
 
 fn present_error(application: &adw::Application, message: &str) {
-    let window = app::window::AppWindow::new(application);
-    app::actions::install(&window);
+    window(application).show_error(message);
+}
+
+/// The single window, created and shown on first use.
+fn window(application: &adw::Application) -> Rc<app::window::AppWindow> {
+    let window = app::window::current().unwrap_or_else(|| {
+        let window = app::window::AppWindow::new(application);
+        app::actions::install(&window);
+        window
+    });
     window.window.present();
-    window.show_error(message);
+    window
 }

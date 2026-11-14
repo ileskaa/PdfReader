@@ -5,6 +5,7 @@ use gtk4::glib;
 use gtk4::prelude::*;
 use libadwaita as adw;
 
+use crate::app::tab::DocumentTab;
 use crate::app::window::AppWindow;
 use crate::view::layout::ZoomMode;
 
@@ -33,26 +34,36 @@ pub fn install_accels(app: &adw::Application) {
 
 pub fn install(window: &Rc<AppWindow>) {
     add(window, "open", |window| window.open_dialog());
-    add(window, "find", |window| window.show_find());
-    add(window, "find-close", |window| window.close_find());
-    add(window, "find-next", |window| window.view.find_step(true));
-    add(window, "find-previous", |window| {
-        window.view.find_step(false)
+    add(window, "close", |window| window.close_selected_tab());
+    add_tab(window, "find", |tab| tab.show_find());
+    add_tab(window, "find-close", |tab| tab.close_find());
+    add_tab(window, "find-next", |tab| tab.view.find_step(true));
+    add_tab(window, "find-previous", |tab| tab.view.find_step(false));
+    add_tab(window, "copy", |tab| tab.view.copy_selection());
+    add_tab(window, "select-all", |tab| tab.view.select_all());
+    add_tab(window, "zoom-in", |tab| tab.view.zoom_by(1.25));
+    add_tab(window, "zoom-out", |tab| tab.view.zoom_by(1.0 / 1.25));
+    add_tab(window, "zoom-reset", |tab| {
+        tab.view.set_zoom_mode(ZoomMode::Fixed(1.0))
     });
-    add(window, "copy", |window| window.view.copy_selection());
-    add(window, "select-all", |window| window.view.select_all());
-    add(window, "zoom-in", |window| window.view.zoom_by(1.25));
-    add(window, "zoom-out", |window| window.view.zoom_by(1.0 / 1.25));
-    add(window, "zoom-reset", |window| {
-        window.view.set_zoom_mode(ZoomMode::Fixed(1.0))
+    add_tab(window, "fit-width", |tab| {
+        tab.view.set_zoom_mode(ZoomMode::FitWidth)
     });
-    add(window, "fit-width", |window| {
-        window.view.set_zoom_mode(ZoomMode::FitWidth)
+    add_tab(window, "fit-page", |tab| {
+        tab.view.set_zoom_mode(ZoomMode::FitPage)
     });
-    add(window, "fit-page", |window| {
-        window.view.set_zoom_mode(ZoomMode::FitPage)
+}
+
+/// A document action, applied to the selected tab; with no tab open it does nothing.
+fn add_tab<F>(window: &Rc<AppWindow>, name: &str, callback: F)
+where
+    F: Fn(&DocumentTab) + 'static,
+{
+    add(window, name, move |window| {
+        if let Some(tab) = window.selected_tab() {
+            callback(&tab);
+        }
     });
-    add(window, "close", |window| window.window.close());
 }
 
 fn add<F>(window: &Rc<AppWindow>, name: &str, callback: F)

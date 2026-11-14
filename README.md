@@ -101,10 +101,13 @@ xdg-mime default io.github.ileskaa.PdfReader.desktop application/pdf
 ## Using it
 
 ```sh
-pdf-reader                  # opens an empty window
-pdf-reader document.pdf     # opens a document
+pdf-reader                  # reopens the documents that were open last time
+pdf-reader a.pdf b.pdf      # opens these documents, each in its own tab
 pdf-reader --check file.pdf # headless self-check: render and text-extract every page
 ```
+
+Documents open as tabs in a single window. Opening a file while the reader is running adds a
+tab to it, and opening a document that is already open switches to its tab.
 
 The window follows the desktop's light/dark preference and switches live, without a restart.
 Pages themselves are always shown as authored — white paper on a dark canvas in dark mode —
@@ -126,7 +129,10 @@ edge is visible even against the near-white light canvas.
 | `Ctrl+0`                  | Actual size               |
 | `Ctrl+1` / `Ctrl+2`       | Fit width / fit page      |
 | `Ctrl+scroll`             | Zoom                      |
-| `Ctrl+W`                  | Close the window          |
+| `Ctrl+W`                  | Close the tab             |
+| `Ctrl+Tab` / `Ctrl+PgDn`  | Next tab                  |
+| `Ctrl+Shift+Tab` / `Ctrl+PgUp` | Previous tab         |
+| `Alt+1` … `Alt+9`         | Go to tab 1 … 9           |
 
 Middle-click pastes the current selection into other applications, as in a browser.
 
