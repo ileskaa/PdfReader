@@ -259,19 +259,23 @@ impl AppWindow {
             .default_filter(&filter)
             .modal(true)
             .build();
-        dialog.open(
+        dialog.open_multiple(
             Some(&self.window),
             gio::Cancellable::NONE,
             glib::clone!(
                 #[weak(rename_to = this)]
                 self,
                 move |result| {
-                    let Ok(file) = result else {
+                    let Ok(files) = result else {
                         return;
                     };
-                    match file.path() {
-                        Some(path) => this.open(path),
-                        None => this.show_error(&format!("{} is not a local file.", file.uri())),
+                    for file in files.iter::<gio::File>().flatten() {
+                        match file.path() {
+                            Some(path) => this.open(path),
+                            None => {
+                                this.show_error(&format!("{} is not a local file.", file.uri()))
+                            }
+                        }
                     }
                 }
             ),
